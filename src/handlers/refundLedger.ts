@@ -24,6 +24,8 @@ export class RefundLedger implements Subscriber<RefundRequested> {
   readonly name = 'RefundLedger';
 
   private readonly entries: LedgerEntry[] = [];
+  private readonly recordedMessageIds = new Set<string>();
+  private readonly settledMessageIds = new Set<string>();
   private readonly gateway: PaymentGateway;
 
   constructor(gateway: PaymentGateway) {
@@ -31,16 +33,26 @@ export class RefundLedger implements Subscriber<RefundRequested> {
   }
 
   handle(message: Message<RefundRequested>): void {
+    if (this.settledMessageIds.has(message.id)) {
+      return;
+    }
+
     const event = message.payload;
-    this.entries.push({
-      entryId: `led-${this.entries.length + 1}`,
-      bookingId: event.bookingId,
-      organizer: event.organizer,
-      amountCents: event.amountCents,
-      reason: event.reason,
-      recordedAtMinute: message.publishedAtMinute,
-    });
+    if (!this.recordedMessageIds.has(message.id)) {
+      this.entries.push({
+        entryId: `led-${this.entries.length + 1}`,
+        bookingId: event.bookingId,
+        organizer: event.organizer,
+        amountCents: event.amountCents,
+        reason: event.reason,
+        recordedAtMinute: message.publishedAtMinute,
+      });
+      this.recordedMessageIds.add(message.id);
+    }
+
+    // A failed payment leaves the ledger recorded, but the refund still retryable.
     this.gateway.refund(event.bookingId, event.amountCents);
+    this.settledMessageIds.add(message.id);
   }
 
   /** Every ledger entry, oldest first. */

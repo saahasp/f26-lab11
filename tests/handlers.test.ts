@@ -111,4 +111,65 @@ describe('the refund ledger', () => {
     expect(app.ledger.size()).toBe(0);
     expect(app.gateway.callCount()).toBe(0);
   });
+
+  it('does not record or pay a settled refund again on redelivery', () => {
+    const app = newApp();
+    const booking = aBookingWithRefund(app);
+    const cancellation = app.service.cancel(booking.id);
+    const messageId = cancellation.refundMessageId;
+    if (messageId === undefined) {
+      throw new Error('expected a refund message');
+    }
+    const ledger = app.ledger.all();
+    const settlements = app.gateway.settled();
+
+    app.bus.redeliver(messageId);
+    app.bus.redeliver(messageId);
+
+    expect(app.ledger.all()).toEqual(ledger);
+    expect(app.gateway.settled()).toEqual(settlements);
+    expect(app.ledger.totalRefundedCents()).toBe(8500);
+    expect(app.gateway.totalSettledCents()).toBe(8500);
+    expect(app.gateway.callCount()).toBe(1);
+    expect(app.bus.deliveryCount(messageId)).toBe(3);
+    expect(app.bus.deadLetters()).toHaveLength(0);
+  });
+
+  it('finishes an unpaid refund after repeated failures without duplicating its ledger entry', () => {
+    const app = newApp();
+    app.gateway.failOnCall(1);
+    const booking = aBookingWithRefund(app);
+    const cancellation = app.service.cancel(booking.id);
+    const messageId = cancellation.refundMessageId;
+    if (messageId === undefined) {
+      throw new Error('expected a refund message');
+    }
+    const ledgerAfterFailure = app.ledger.all();
+
+    expect(cancellation.booking.status).toBe('cancelled');
+    expect(ledgerAfterFailure).toHaveLength(1);
+    expect(app.gateway.settled()).toHaveLength(0);
+    expect(app.gateway.callCount()).toBe(1);
+
+    app.gateway.failOnCall(2);
+    app.bus.redeliver(messageId);
+
+    expect(app.ledger.all()).toEqual(ledgerAfterFailure);
+    expect(app.gateway.settled()).toHaveLength(0);
+    expect(app.gateway.callCount()).toBe(2);
+    expect(app.bus.deadLetters().map((failure) => failure.attempt)).toEqual([1, 2]);
+
+    app.bus.redeliver(messageId);
+    const recoveredSettlements = app.gateway.settled();
+    app.bus.redeliver(messageId);
+
+    expect(app.ledger.all()).toEqual(ledgerAfterFailure);
+    expect(app.ledger.totalRefundedCents()).toBe(8500);
+    expect(recoveredSettlements).toHaveLength(1);
+    expect(app.gateway.settled()).toEqual(recoveredSettlements);
+    expect(app.gateway.totalSettledCents()).toBe(8500);
+    expect(app.gateway.callCount()).toBe(3);
+    expect(app.bus.deliveryCount(messageId)).toBe(4);
+    expect(app.bus.deadLetters()).toHaveLength(2);
+  });
 });
