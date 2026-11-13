@@ -336,6 +336,7 @@ Manual triage would cost an operator time to investigate the dead letter and rec
 
 ## Verification
 
+- Repository: [saahasp/f26-lab11](https://github.com/saahasp/f26-lab11), verified as a fork of `CMU-17-214/f26-lab11`; the existing CI workflow has been enabled.
 - Before changes: `npm install`, `npm run typecheck`, and all 33 starter tests passed.
 - After changes: `npm run typecheck` and all 36 tests passed across six files.
 - Added regressions cover successful replay and two failed payments followed by recovery and another replay.
